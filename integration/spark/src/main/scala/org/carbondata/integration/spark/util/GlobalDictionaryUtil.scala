@@ -20,16 +20,15 @@ package org.carbondata.integration.spark.util
 import java.io.IOException
 import java.util.regex.Pattern
 
-import scala.collection.JavaConverters.asScalaBufferConverter
-import scala.collection.mutable.{ ArrayBuffer, HashMap, HashSet }
+import scala.collection.JavaConverters._
+import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
 import scala.language.implicitConversions
-import scala.util.control.Breaks.{ break, breakable }
+import scala.util.control.Breaks.{break, breakable}
 
-import org.apache.commons.lang3.{ ArrayUtils, StringUtils }
+import org.apache.commons.lang3.{ArrayUtils, StringUtils}
 import org.apache.spark.Logging
-import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.rdd.RDD.rddToPairRDDFunctions
-import org.apache.spark.sql.{ DataFrame, SQLContext }
+import org.apache.spark.sql.{DataFrame, SQLContext}
 
 import org.carbondata.core.cache.dictionary.Dictionary
 import org.carbondata.core.carbon.CarbonTableIdentifier
@@ -40,17 +39,16 @@ import org.carbondata.core.carbon.path.CarbonStorePath
 import org.carbondata.core.constants.CarbonCommonConstants
 import org.carbondata.core.datastorage.store.filesystem.CarbonFile
 import org.carbondata.core.datastorage.store.impl.FileFactory
-import org.carbondata.core.reader.CarbonDictionaryReader
-import org.carbondata.core.reader.CarbonDictionaryReaderImpl
+import org.carbondata.core.reader.{CarbonDictionaryReader, CarbonDictionaryReaderImpl}
 import org.carbondata.core.util.CarbonUtil
-import org.carbondata.core.writer.{ CarbonDictionaryWriter, CarbonDictionaryWriterImpl }
-import org.carbondata.core.writer.sortindex.{ CarbonDictionarySortIndexWriter, CarbonDictionarySortIndexWriterImpl }
+import org.carbondata.core.writer.{CarbonDictionaryWriter, CarbonDictionaryWriterImpl}
+import org.carbondata.core.writer.sortindex.{CarbonDictionarySortIndexWriter, CarbonDictionarySortIndexWriterImpl}
 import org.carbondata.integration.spark.load.CarbonDictionarySortInfo
 import org.carbondata.integration.spark.load.CarbonDictionarySortInfoPreparator
 import org.carbondata.integration.spark.load.CarbonLoaderUtil
 import org.carbondata.integration.spark.load.CarbonLoadModel
 import org.carbondata.integration.spark.partition.reader.CSVWriter
-import org.carbondata.integration.spark.rdd.{ ArrayParser, CarbonBlockDistinctValuesCombineRDD, CarbonGlobalDictionaryGenerateRDD, ColumnPartitioner, DataFormat, DictionaryLoadModel, GenericParser, PrimitiveParser, StructParser }
+import org.carbondata.integration.spark.rdd._
 
 /**
  * A object which provide a method to generate global dictionary from CSV files.
@@ -67,7 +65,8 @@ object GlobalDictionaryUtil extends Logging {
                       columns: Array[String]): ( Array[CarbonDimension], Array[String] ) = {
     val dimensionBuffer = new ArrayBuffer[CarbonDimension]
     val columnNameBuffer = new ArrayBuffer[String]
-    val dimensionsWithDict = dimensions.filter(hasEncoding(_, Encoding.DICTIONARY))
+    val dimensionsWithDict = dimensions.filter(hasEncoding(_, Encoding.DICTIONARY,
+      Encoding.DIRECT_DICTIONARY))
     for (dim <- dimensionsWithDict) {
       breakable {
         for (i <- 0 until headers.length) {
@@ -85,13 +84,14 @@ object GlobalDictionaryUtil extends Logging {
   /**
    *  use this method to judge whether CarbonDimension use some encoding or not
    */
-  def hasEncoding(dimension: CarbonDimension, encoding: Encoding): Boolean = {
+  def hasEncoding(dimension: CarbonDimension, encoding: Encoding,
+    excludeEncoding: Encoding): Boolean = {
     if (dimension.isComplex()) {
       var has = false
       var children = dimension.getListOfChildDimensions
       breakable {
         for (i <- 0 until children.size) {
-          has = has || hasEncoding(children.get(i), encoding);
+          has = has || hasEncoding(children.get(i), encoding, excludeEncoding);
           if (has) {
             break;
           }
@@ -99,20 +99,24 @@ object GlobalDictionaryUtil extends Logging {
       }
       has
     } else {
-      dimension.hasEncoding(encoding)
+      dimension.hasEncoding(encoding) &&
+        ( excludeEncoding == null || ! dimension.hasEncoding(excludeEncoding))
     }
   }
 
   def gatherDimensionByEncoding(dimension: CarbonDimension,
                                 encoding: Encoding,
+                                excludeEncoding: Encoding,
                                 dimensionsWithEncoding: ArrayBuffer[CarbonDimension]) {
     if (dimension.isComplex()) {
       val children = dimension.getListOfChildDimensions()
       for (i <- 0 until children.size) {
-        gatherDimensionByEncoding(children.get(i), encoding, dimensionsWithEncoding)
+        gatherDimensionByEncoding(children.get(i), encoding, excludeEncoding,
+          dimensionsWithEncoding)
       }
     } else {
-      if (dimension.hasEncoding(encoding)) {
+      if (dimension.hasEncoding(encoding) &&
+        ( excludeEncoding == null || ! dimension.hasEncoding(excludeEncoding))) {
         dimensionsWithEncoding += dimension
       }
     }
@@ -120,7 +124,8 @@ object GlobalDictionaryUtil extends Logging {
 
   def getPrimDimensionWithDict(dimension: CarbonDimension): Array[CarbonDimension] = {
     val dimensionsWithDict = new ArrayBuffer[CarbonDimension]
-    gatherDimensionByEncoding(dimension, Encoding.DICTIONARY, dimensionsWithDict)
+    gatherDimensionByEncoding(dimension, Encoding.DICTIONARY, Encoding.DIRECT_DICTIONARY,
+      dimensionsWithDict)
     dimensionsWithDict.toArray
   }
 
@@ -149,14 +154,17 @@ object GlobalDictionaryUtil extends Logging {
   /**
    * invokes the CarbonDictionarySortIndexWriter to write column sort info
    * sortIndex and sortIndexInverted data to sortinsex file.
-   * @param model
+    *
+    * @param model
    * @param index
    */
-  def writeGlobalDictionaryColumnSortInfo(model: DictionaryLoadModel, index: Int): Unit = {
+  def writeGlobalDictionaryColumnSortInfo(model: DictionaryLoadModel, index: Int,
+    dictionary: Dictionary, newDistinctValues: ArrayBuffer[String]): Unit = {
     val preparator: CarbonDictionarySortInfoPreparator =
       new CarbonDictionarySortInfoPreparator(model.hdfsLocation, model.table)
     val dictionarySortInfo: CarbonDictionarySortInfo =
-      preparator.getDictionarySortInfo(model.primDimensions(index).getColumnId)
+      preparator.getDictionarySortInfo(dictionary, newDistinctValues.asJava,
+        model.primDimensions(index).getDataType)
     val carbonDictionaryWriter: CarbonDictionarySortIndexWriter =
       new CarbonDictionarySortIndexWriterImpl(model.table,
         model.primDimensions(index).getColumnId, model.hdfsLocation)
@@ -177,7 +185,8 @@ object GlobalDictionaryUtil extends Logging {
     for (i <- 0 until model.primDimensions.length) {
       if (model.dictFileExists(i)) {
         val dict = CarbonLoaderUtil.getDictionary(model.table,
-            model.primDimensions(i).getColumnId, model.hdfsLocation)
+          model.primDimensions(i).getColumnId, model.hdfsLocation
+        )
         dictMap.put(model.primDimensions(i).getColumnId, dict)
       }
     }
@@ -454,34 +463,34 @@ object GlobalDictionaryUtil extends Logging {
     val values = valuesBuffer.toArray
     val newDistinctValueList = new ArrayBuffer[String]
     java.util.Arrays.sort(values, Ordering[String])
-    
-     if (!model.dictFileExists(columnIndex)) {
-        newDistinctValueList += CarbonCommonConstants.MEMBER_DEFAULT_VAL
-     }
-    
-    if(values.length >=1){
+
+    if (!model.dictFileExists(columnIndex)) {
+      newDistinctValueList += CarbonCommonConstants.MEMBER_DEFAULT_VAL
+    }
+
+    if (values.length >= 1) {
       var preValue = values(0)
-      if(model.dictFileExists(columnIndex)){
-        if(dictionary.getSurrogateKey(values(0)) == CarbonCommonConstants.INVALID_SURROGATE_KEY){
+      if (model.dictFileExists(columnIndex)) {
+        if (dictionary.getSurrogateKey(values(0)) == CarbonCommonConstants.INVALID_SURROGATE_KEY) {
           newDistinctValueList += values(0)
         }
-        for(i <- 1 until values.length){
-           if(values(i) != preValue){
-             if(dictionary.getSurrogateKey(values(i)) == 
-                 CarbonCommonConstants.INVALID_SURROGATE_KEY){
-               newDistinctValueList += values(i)
-               preValue = values(i)
-             }
-           }
+        for (i <- 1 until values.length) {
+          if (values(i) != preValue) {
+            if (dictionary.getSurrogateKey(values(i)) ==
+              CarbonCommonConstants.INVALID_SURROGATE_KEY) {
+              newDistinctValueList += values(i)
+              preValue = values(i)
+            }
+          }
         }
-        
-      }else{
+
+      } else {
         newDistinctValueList += values(0)
-        for(i <- 1 until values.length){
-           if(values(i) != preValue){
-             newDistinctValueList += values(i)
-             preValue = values(i)
-           }
+        for (i <- 1 until values.length) {
+          if (values(i) != preValue) {
+            newDistinctValueList += values(i)
+            preValue = values(i)
+          }
         }
       }
     }
