@@ -356,6 +356,7 @@ object GlobalDictionaryUtil extends Logging {
       .option("delimiter",
         {if (StringUtils.isEmpty(carbonLoadModel.getCsvDelimiter))"" + CSVWriter.DEFAULT_SEPARATOR
           else carbonLoadModel.getCsvDelimiter})
+      .option("parserLib", "univocity")
       .load(getPaths(carbonLoadModel.getFactFilePath))
     df
   }
@@ -451,5 +452,40 @@ object GlobalDictionaryUtil extends Logging {
         logError("generate global dictionary failed")
         throw ex
     }
+  }
+
+  def generateNewDistinctValueList(valuesBuffer: ArrayBuffer[String], dictionary: Dictionary,
+    model: DictionaryLoadModel, columnIndex: Int) : ArrayBuffer[String] = {
+    val values = valuesBuffer.toArray
+    val newDistinctValueList = new ArrayBuffer[String]
+    java.util.Arrays.sort(values, Ordering[String])
+    
+    if(values.length >=1){
+      var preValue = values(0)
+      if(model.dictFileExists(columnIndex)){
+        if(dictionary.getSurrogateKey(values(0)) == CarbonCommonConstants.INVALID_SURROGATE_KEY){
+          newDistinctValueList += values(0)
+        }
+        for(i <- 1 until values.length){
+           if(values(i) != preValue){
+             if(dictionary.getSurrogateKey(values(i)) == 
+                 CarbonCommonConstants.INVALID_SURROGATE_KEY){
+               newDistinctValueList += values(i)
+               preValue = values(i)
+             }
+           }
+        }
+        
+      }else{
+        newDistinctValueList += values(0)
+        for(i <- 1 until values.length){
+           if(values(i) != preValue){
+             newDistinctValueList += values(i)
+             preValue = values(i)
+           }
+        }
+      }
+    }
+    newDistinctValueList
   }
 }

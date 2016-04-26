@@ -33,6 +33,7 @@ import org.carbondata.core.cache.dictionary.ReverseDictionary
 import org.carbondata.core.carbon.CarbonTableIdentifier
 import org.carbondata.core.carbon.metadata.schema.table.column.CarbonDimension
 import org.carbondata.core.constants.CarbonCommonConstants
+import org.carbondata.integration.spark.load.CarbonLoaderUtil
 import org.carbondata.integration.spark.util.{ CarbonSparkInterFaceLogEvent, GlobalDictionaryUtil }
 
 /**
@@ -154,11 +155,11 @@ case class DictionaryLoadModel(table: CarbonTableIdentifier,
 class CarbonBlockDistinctValuesCombineRDD(
   prev: RDD[Row],
   model: DictionaryLoadModel)
-    extends RDD[(Int, HashSet[String])](prev) with Logging {
+    extends RDD[(Int, Array[String])](prev) with Logging {
 
   override def getPartitions: Array[Partition] = firstParent[Row].partitions
 
-  override def compute(split: Partition, context: TaskContext): Iterator[(Int, HashSet[String])] = {
+  override def compute(split: Partition, context: TaskContext): Iterator[(Int, Array[String])] = {
     val LOGGER = LogServiceFactory.getLogService(this.getClass().getName());
 
     val distinctValuesList = new ArrayBuffer[(Int, HashSet[String])]
@@ -198,7 +199,11 @@ class CarbonBlockDistinctValuesCombineRDD(
       case ex: Exception =>
         LOGGER.error(CarbonSparkInterFaceLogEvent.UNIBI_CARBON_SPARK_INTERFACE_MSG, ex)
     }
-    distinctValuesList.toIterator
+    distinctValuesList.map{iter=> 
+      val valueList = iter._2.toArray
+      java.util.Arrays.sort(valueList, Ordering[String])
+      (iter._1, valueList)
+    }.iterator
   }
 }
 
@@ -210,11 +215,11 @@ class CarbonBlockDistinctValuesCombineRDD(
  * @param model a model package load info
  */
 class CarbonGlobalDictionaryGenerateRDD(
-  prev: RDD[(Int, HashSet[String])],
+  prev: RDD[(Int, Array[String])],
   model: DictionaryLoadModel)
     extends RDD[(String, String)](prev) with Logging {
 
-  override def getPartitions: Array[Partition] = firstParent[(Int, HashSet[String])].partitions
+  override def getPartitions: Array[Partition] = firstParent[(Int, Array[String])].partitions
 
   override def compute(split: Partition, context: TaskContext): Iterator[(String, String)] = {
     val LOGGER = LogServiceFactory.getLogService(this.getClass().getName());
@@ -222,16 +227,42 @@ class CarbonGlobalDictionaryGenerateRDD(
     val iter = new Iterator[(String, String)] {
       // generate distinct value list
       try {
-        val distinctValues = new HashSet[String]
-        val rddIter = firstParent[(Int, HashSet[String])].iterator(split, context)
+        val t1 = System.currentTimeMillis        
+        val dictionary = if(model.dictFileExists(split.index)) {
+			      CarbonLoaderUtil.getDictionary(model.table,
+                 model.primDimensions(split.index).getColumnId,
+                 model.hdfsLocation)
+          }else{
+            null
+          }
+        val t2 = System.currentTimeMillis
+        val valuesBuffer = new ArrayBuffer[String]
+        val rddIter = firstParent[(Int, Array[String])].iterator(split, context)
         while (rddIter.hasNext) {
-          distinctValues ++= rddIter.next()._2
+          valuesBuffer ++= rddIter.next()._2
         }
+        val t3 = System.currentTimeMillis
+        val newDictinctValues = GlobalDictionaryUtil.generateNewDistinctValueList(
+                valuesBuffer, dictionary, model, split.index)
+        val t4 = System.currentTimeMillis
         // write to file
-        if (!model.dictFileExists(split.index) || distinctValues.size > 0) {
+        if (!model.dictFileExists(split.index) || newDictinctValues.size > 0) {
           GlobalDictionaryUtil.writeGlobalDictionaryToFile(model,
-            split.index, distinctValues.toIterator)
+            split.index, newDictinctValues.iterator)
+          val t5 = System.currentTimeMillis
           GlobalDictionaryUtil.writeGlobalDictionaryColumnSortInfo(model, split.index);
+          val t6 = System.currentTimeMillis
+          
+          LOGGER.info(CarbonSparkInterFaceLogEvent.UNIBI_CARBON_SPARK_INTERFACE_MSG, 
+            "\n columnName:" + model.primDimensions(split.index).getColName +
+            "\n columnId:" + model.primDimensions(split.index).getColumnId +
+            "\n new distcint values count:" + newDictinctValues.size +
+            "\n create dictionary cache:" + (t2 - t1) +
+            "\n combine lists:" + (t3 - t2) +
+            "\n sort list and dictinct:" + (t4 - t3) +
+            "\n write dictionary file:" + (t5 - t4) +
+            "\n write sort info:" + (t6 - t5)
+          )
         }
       } catch {
         case ex: Exception =>
