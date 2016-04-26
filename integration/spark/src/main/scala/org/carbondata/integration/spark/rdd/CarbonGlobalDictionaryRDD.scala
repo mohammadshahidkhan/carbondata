@@ -55,13 +55,7 @@ trait GenericParser {
 }
 
 case class PrimitiveParser(dimension: CarbonDimension,
-                           setOpt: Option[HashSet[String]],
-                           dictOpt: Option[Dictionary]) extends GenericParser {
-  val (existsDict: Boolean, dict: Dictionary) = dictOpt match {
-    case None => (false, new ReverseDictionary(null))
-    case Some(x) => (true, x)
-  }
-
+                           setOpt: Option[HashSet[String]]) extends GenericParser {
   val (hasDictEncoding, set: HashSet[String]) = setOpt match {
     case None => (false, new HashSet[String])
     case Some(x) => (true, x)
@@ -72,13 +66,7 @@ case class PrimitiveParser(dimension: CarbonDimension,
 
   def parseString(input: String): Unit = {
     if (hasDictEncoding) {
-      if (existsDict) {
-        if (dict.getSurrogateKey(input) == CarbonCommonConstants.INVALID_SURROGATE_KEY) {
-          set.add(input)
-        }
-      } else {
-        set.add(input)
-      }
+      set.add(input)
     }
   }
 }
@@ -164,24 +152,22 @@ class CarbonBlockDistinctValuesCombineRDD(
 
     val distinctValuesList = new ArrayBuffer[(Int, HashSet[String])]
     try {
-      // load exists dictionary to list of HashMap
-      val dictMap = GlobalDictionaryUtil.readGlobalDictionaryFromCache(model)
       // local combine set
       val dimNum = model.dimensions.length
       val primDimNum = model.primDimensions.length
-      val sets = new Array[HashSet[String]](primDimNum)
-      val mapIdWithSet = new HashMap[String, HashSet[String]]
+      val columnValues = new Array[HashSet[String]](primDimNum)
+      val mapColumnValuesWithId = new HashMap[String, HashSet[String]]
       for (i <- 0 until primDimNum) {
-        sets(i) = new HashSet[String]
-        distinctValuesList += ((i, sets(i)))
-        mapIdWithSet.put(model.primDimensions(i).getColumnId, sets(i))
+        columnValues(i) = new HashSet[String]
+        distinctValuesList += ((i, columnValues(i)))
+        mapColumnValuesWithId.put(model.primDimensions(i).getColumnId, columnValues(i))
       }
       val dimensionParsers = new Array[GenericParser](dimNum)
       for (j <- 0 until dimNum) {
         dimensionParsers(j) = GlobalDictionaryUtil.generateParserForDimension(
           Some(model.dimensions(j)),
           GlobalDictionaryUtil.createDataFormat(model.delimiters),
-          mapIdWithSet, dictMap).get
+          mapColumnValuesWithId).get
       }
       var row: Row = null
       var value: String = null

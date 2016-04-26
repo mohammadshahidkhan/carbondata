@@ -138,9 +138,6 @@ object GlobalDictionaryUtil extends Logging {
       model.hdfsLocation, model.table,
       model.primDimensions(columnIndex).getColumnId)
     try {
-      if (!model.dictFileExists(columnIndex)) {
-        writer.write(CarbonCommonConstants.MEMBER_DEFAULT_VAL)
-      }
       while (iter.hasNext) {
         writer.write(iter.next)
       }
@@ -214,13 +211,12 @@ object GlobalDictionaryUtil extends Logging {
 
   def generateParserForChildrenDimension(dim: CarbonDimension,
                                          format: DataFormat,
-                                         map: HashMap[String, HashSet[String]],
-                                         dictMap: HashMap[String, Dictionary],
+                                         mapColumnValuesWithId: HashMap[String, HashSet[String]],
                                          generic: GenericParser): Unit = {
     val children = dim.getListOfChildDimensions.asScala
     for (i <- 0 until children.length) {
       generateParserForDimension(Some(children(i)), format.cloneAndIncreaseIndex,
-        map, dictMap) match {
+        mapColumnValuesWithId) match {
           case Some(childDim) =>
             generic.addChild(childDim)
           case None =>
@@ -230,8 +226,7 @@ object GlobalDictionaryUtil extends Logging {
 
   def generateParserForDimension(dimension: Option[CarbonDimension],
                                  format: DataFormat,
-                                 map: HashMap[String, HashSet[String]],
-                                 dictMap: HashMap[String, Dictionary]
+                                 mapColumnValuesWithId: HashMap[String, HashSet[String]]
   ): Option[GenericParser] = {
     dimension match {
       case None =>
@@ -240,14 +235,14 @@ object GlobalDictionaryUtil extends Logging {
         dim.getDataType match {
           case DataType.ARRAY =>
             val arrDim = ArrayParser(dim, format)
-            generateParserForChildrenDimension(dim, format, map, dictMap, arrDim)
+            generateParserForChildrenDimension(dim, format, mapColumnValuesWithId, arrDim)
             Some(arrDim)
           case DataType.STRUCT =>
             val stuDim = StructParser(dim, format)
-            generateParserForChildrenDimension(dim, format, map, dictMap, stuDim)
+            generateParserForChildrenDimension(dim, format, mapColumnValuesWithId, stuDim)
             Some(stuDim)
           case _ =>
-            Some(PrimitiveParser(dim, map.get(dim.getColumnId), dictMap.get(dim.getColumnId)))
+            Some(PrimitiveParser(dim, mapColumnValuesWithId.get(dim.getColumnId)))
         }
     }
   }
@@ -459,6 +454,10 @@ object GlobalDictionaryUtil extends Logging {
     val values = valuesBuffer.toArray
     val newDistinctValueList = new ArrayBuffer[String]
     java.util.Arrays.sort(values, Ordering[String])
+    
+     if (!model.dictFileExists(columnIndex)) {
+        newDistinctValueList += CarbonCommonConstants.MEMBER_DEFAULT_VAL
+     }
     
     if(values.length >=1){
       var preValue = values(0)
