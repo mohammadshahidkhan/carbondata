@@ -51,20 +51,6 @@ public class CarbonMeasure extends CarbonColumn {
   }
 
   /**
-   * @return the scale
-   */
-  public int getScale() {
-    return scale;
-  }
-
-  /**
-   * @return the precision
-   */
-  public int getPrecision() {
-    return precision;
-  }
-
-  /**
    * @return the aggregator
    */
   public String getAggregateFunction() {

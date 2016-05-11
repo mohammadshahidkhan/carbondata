@@ -117,36 +117,6 @@ public class TableSchema implements Serializable {
   }
 
   /**
-   * to get the column schema present in the table by name
-   *
-   * @param columnName
-   * @return column schema if matches the name
-   */
-  public ColumnSchema getColumnSchemaByName(String columnName) {
-    for (ColumnSchema tableColumn : listOfColumns) {
-      if (tableColumn.getColumnName().equals(columnName)) {
-        return tableColumn;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * to get the column schema present in the table by unique id
-   *
-   * @param columnUniqueId
-   * @return column schema if matches the id
-   */
-  public ColumnSchema getColumnSchemaById(String columnUniqueId) {
-    for (ColumnSchema tableColumn : listOfColumns) {
-      if (tableColumn.getColumnUniqueId().equalsIgnoreCase(columnUniqueId)) {
-        return tableColumn;
-      }
-    }
-    return null;
-  }
-
-  /**
    * to generate the hascode for this class instance
    */
   @Override public int hashCode() {
