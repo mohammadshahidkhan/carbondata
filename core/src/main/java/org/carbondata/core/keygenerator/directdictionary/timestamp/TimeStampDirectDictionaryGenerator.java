@@ -1,3 +1,4 @@
+
 /*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -28,12 +29,12 @@ import org.carbondata.core.constants.CarbonCommonConstants;
 import org.carbondata.core.keygenerator.directdictionary.DirectDictionaryGenerator;
 import org.carbondata.core.util.CarbonProperties;
 
+import org.apache.spark.sql.columnar.TIMESTAMP;
+
 import static org.carbondata.core.keygenerator.directdictionary.timestamp.TimeStampGranularityConstants.TIME_GRAN_DAY;
 import static org.carbondata.core.keygenerator.directdictionary.timestamp.TimeStampGranularityConstants.TIME_GRAN_HOUR;
 import static org.carbondata.core.keygenerator.directdictionary.timestamp.TimeStampGranularityConstants.TIME_GRAN_MIN;
 import static org.carbondata.core.keygenerator.directdictionary.timestamp.TimeStampGranularityConstants.TIME_GRAN_SEC;
-
-import org.apache.spark.sql.columnar.TIMESTAMP;
 /**
  * The class provides the method to generate dictionary key and getting the actual value from
  * the dictionaryKey for direct dictionary column for TIMESTAMP type.
@@ -89,6 +90,7 @@ public class TimeStampDirectDictionaryGenerator implements DirectDictionaryGener
         SimpleDateFormat timeParser = new SimpleDateFormat(CarbonProperties.getInstance()
             .getProperty(CarbonCommonConstants.CARBON_TIMESTAMP_FORMAT,
                 CarbonCommonConstants.CARBON_TIMESTAMP_DEFAULT_FORMAT));
+        timeParser.setLenient(false);
         Date dateToStr = timeParser.parse(cutOffTimeStampString);
         cutOffTimeStamp = dateToStr.getTime();
       } catch (ParseException e) {
@@ -110,6 +112,7 @@ public class TimeStampDirectDictionaryGenerator implements DirectDictionaryGener
     SimpleDateFormat timeParser = new SimpleDateFormat(CarbonProperties.getInstance()
         .getProperty(CarbonCommonConstants.CARBON_TIMESTAMP_FORMAT,
             CarbonCommonConstants.CARBON_TIMESTAMP_DEFAULT_FORMAT));
+    timeParser.setLenient(false);
     Date dateToStr = null;
     try {
       dateToStr = timeParser.parse(memberStr);
@@ -118,12 +121,14 @@ public class TimeStampDirectDictionaryGenerator implements DirectDictionaryGener
           + e.getMessage());
     }
     if (null == dateToStr) {
-      return 1;
+      return -1;
     } else {
       if (cutOffTimeStamp >= 0) {
-        return (int) ((dateToStr.getTime() - cutOffTimeStamp) / granularityFactor);
+        int keyValue = (int) ((dateToStr.getTime() - cutOffTimeStamp) / granularityFactor);
+        return keyValue < 0 ? -1 : keyValue;
       } else {
-        return (int) (dateToStr.getTime() / granularityFactor);
+        int keyValue = (int) (dateToStr.getTime() / granularityFactor);
+        return keyValue < 0 ? -1 : keyValue;
       }
     }
   }
